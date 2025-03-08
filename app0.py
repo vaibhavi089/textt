@@ -15,7 +15,11 @@ app = Flask(__name__)
 api = FastAPI()
 
 # ✅ Load NSFW Image Classification Model
-pipe = pipeline("image-classification", model="LukeJacob2023/nsfw-image-detector")
+try:
+    pipe = pipeline("image-classification", model="LukeJacob2023/nsfw-image-detector")
+except Exception as e:
+    print(f"❌ Error loading NSFW model: {e}")
+    exit(1)
 
 # ✅ Load Toxic Text Classification Model
 try:
@@ -44,14 +48,18 @@ def classify_image():
         return jsonify({"error": "No file uploaded"}), 400
     
     file = request.files['file']
-    image = Image.open(io.BytesIO(file.read()))
-    results = pipe(image)
-    
-    classification_label = max(results, key=lambda x: x['score'])['label']
-    nsfw_labels = {"sexy", "porn", "hentai"}
-    nsfw_status = "NSFW" if classification_label in nsfw_labels else "SFW"
+    try:
+        image = Image.open(io.BytesIO(file.read())).convert("RGB")  # Ensure RGB mode
+        results = pipe(image)
+        
+        classification_label = max(results, key=lambda x: x['score'])['label']
+        nsfw_labels = {"sexy", "porn", "hentai"}
+        nsfw_status = "NSFW" if classification_label in nsfw_labels else "SFW"
 
-    return jsonify({"status": nsfw_status, "results": results})
+        return jsonify({"status": nsfw_status, "results": results})
+    
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 # 📌 Toxic Text Classification API (FastAPI)
 @api.post("/classify_text/")
@@ -67,12 +75,17 @@ async def classify_text(data: TextInput):
 
 # 🔥 Run both servers using Gunicorn
 def run_flask():
-    app.run(host="0.0.0.0", port=5000)
+    app.run(host="0.0.0.0", port=5000, debug=False)
 
 def run_fastapi():
     uvicorn.run(api, host="0.0.0.0", port=8000)
 
 if __name__ == "__main__":
-    Thread(target=run_flask).start()
-    Thread(target=run_fastapi).start()
+    flask_thread = Thread(target=run_flask, daemon=True)
+    fastapi_thread = Thread(target=run_fastapi, daemon=True)
 
+    flask_thread.start()
+    fastapi_thread.start()
+
+    flask_thread.join()
+    fastapi_thread.join()
